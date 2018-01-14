@@ -1,3 +1,6 @@
+p=#plink dir
+b=#beagle 3.3.2 dir
+
 # set variables 
 mode=$1
 data=$2
@@ -17,11 +20,11 @@ if [ "$data" == "" ]; then
 fi
  
 if [ "$data_dir" == "" ]; then
-     data_dir= #data directory
+     data_dir=#input data dir
 fi
  
 if [ "$out_dir" == "" ]; then
-    out_dir= #out directory
+    out_dir=#output dir
 fi
  
 if [ "$start_set" == "" ]; then
@@ -134,13 +137,9 @@ if [ "$mode" == "split.chr.input" ]; then
                 
 				# write "chr# | chunk # | starting bp # | ending bp #" to outfile
 				echo "${CHR} ${s_i} ${start} ${end}" >> ${outfile}
-                    
-			    # extract those snps in .snps file from plink binary file
-				if [ ! -e /chr${CHR}/set${i}.split${s_i}.chr-${CHR}.dat ]; then
                 	
-                        #bsub -R "rusage[mem=3000]" -o ${out_dir}/chr${CHR}.log -e ${out_dir}/chr${CHR}.err -q hour \
-                        plink --bfile region.${data}.chr${CHR} --extract chr${CHR}/chr${CHR}.split.${s_i}.snps --recode vcf --out chr${CHR}/split${s_i}
-                fi
+                #bsub -R "rusage[mem=3000]" -o ${out_dir}/chr${CHR}.log -e ${out_dir}/chr${CHR}.err -q hour \
+                plink --bfile region.${data}.chr${CHR} --extract chr${CHR}/chr${CHR}.split.${s_i}.snps --recode-beagle --out chr${CHR}/split${s_i}
            fi
  
            let s_i=${s_i}+1
@@ -171,13 +170,11 @@ if [ "$mode" == "gen.split.ref" ]; then
         let end=`gawk -v line=$line 'NR==line { print \$4 }' $list_file`
  
         echo "chr=${chr} set=${set} start=${start} end=${end}"
-         
-        if [ ! -e "chr${chr}" ]; then
-            mkdir -p chr${chr}
-        fi
 		
-		#Extract snps belonging to each chunk, list ids and row number in .snps file; list all 4 fields in .markers file
- 
+		#create reference panel with no header
+ 	   	echo "$(tail -n +2 ref_panel_phased_header.bgl)" > ref_panel_phased.bgl
+		
+	#Extract snps belonging to each chunk, list ids and row number in .snps file; list all 4 fields in .markers file
         # extract reference SNPs based on chr pos
         # hap file: marker pos a1 a2
         gawk -v start=$start -v end=$end '$2>=start && $2<=end { print $1,NR }' markers_file.markers > chr${chr}/ref.chr${chr}.split.${set}.snps
@@ -205,24 +202,71 @@ fi
 # ---------------------------------------------------------------------------------------
 # Impute 
 # ---------------------------------------------------------------------------------------
- 
 if [ "$mode" == "step.impute" ]; then
     let CHR=${start_chr} CHR_NO=${end_chr}
+	echo ${CHR}
     while [ $CHR -le $CHR_NO ]; do
-            let split_start=1 split_end=4
-            while [ $split_start -le $split_end ]; do
-                    if [ -e "${data_dir}/chr${CHR}/split${split_start}.chr-${CHR}.dat" ]; then
-                        echo "CHR ${CHR} SET ${split_start}"
-                        bsub -R "rusage[mem=6000]" -o ${out_dir}/chr${CHR}/begl.out -e ${out_dir}/chr${CHR}/begl.err -q medium \
-                        java –Xss5m –Xmx[GB]g –jar ${b}\
-                        unphased=${data_dir}/chr${CHR}/set${i}.split${split_start}.chr-${CHR}.dat \
-                        phased=${hap_dir}/chr${CHR}/ref.chr${CHR}.split.${split_start}.begl \
-                        markers=${hap_dir}/chr${CHR}/ref.chr${CHR}.split.${split_start}.begl.markers  \
-                        missing=0 lowmem=true out=${out_dir}/chr${CHR}/bgl.chr${CHR}.set${i}.split${split_start}
+			list_file=$2
+	    	let split_start=1
+	    	let split_end=`wc -l $list_file | gawk '{ print \$1 }'`
+			
+			#Make directory
+			mkdir chr${CHR}_mod
+			mkdir chr${CHR}/imputed			
+			while [ $split_start -le $split_end ]; do
+                    if [ -e "chr${CHR}/split${split_start}.chr-${CHR}.dat" ]; then
+                        echo "CHR ${CHR} SPLIT ${split_start}: ${check_file}"
+						
+						#Extract C4 variant
+						gawk '$2=="C4" { print $0 }' chr${CHR}/updated.ref.chr${CHR}.split.${split_start}.begl > chr${CHR}_mod/tmpC4.split.${split_start}.bgl
+						#Remove C4 variant before strand flip
+						gawk '$2!="C4" { print $0 }' chr${CHR}/updated.ref.chr${CHR}.split.${split_start}.begl > chr${CHR}_mod/trimmed.updated.ref.chr${CHR}.split.${split_start}.bgl
+						#Markers file mod
+						gawk '$1=="C4" { print $0 }' chr${CHR}/ref.chr${CHR}.split.${split_start}.begl.markers > chr${CHR}_mod/tmpC4.split.${split_start}.markers
+						gawk '$1!="C4" { print $0 }' chr${CHR}/ref.chr${CHR}.split.${split_start}.begl.markers > chr${CHR}_mod/trimmed.updated.ref.chr${CHR}.split.${split_start}.markers						
+						#Rename data files
+						cp chr${CHR}/split${split_start}.chr-${CHR}.dat chr${CHR}_mod/split${split_start}.chr-${CHR}.bgl
+						cp chr${CHR}/split${split_start}.chr-${CHR}.map chr${CHR}_mod/split${split_start}.chr-${CHR}.markers				
+						#flip strands
+						python check_strands/check_strands.py chr${CHR}_mod/trimmed.updated.ref.chr${CHR}.split.${split_start} chr${CHR}_mod/split${split_start}.chr-${CHR} chr${CHR}_mod/mod.split${split_start}.chr-${CHR}
+						
+						#remove blank files
+						size=`ls -l chr${CHR}_mod/tmpC4.split.${split_start}.bgl|awk '{print $5}'`
+						if [ $size -eq 0 ]
+						  then
+						    rm chr${CHR}_mod/tmpC4.split.${split_start}.bgl
+						  fi
+						size=`ls -l chr${CHR}_mod/tmpC4.split.${split_start}.markers|awk '{print $5}'`
+						if [ $size -eq 0 ]
+						  then
+						    rm chr${CHR}_mod/tmpC4.split.${split_start}.markers
+						  fi
+						
+						#put back C4
+						if [ -e "chr${CHR}_mod/tmpC4.split.${split_start}.bgl" ]; then
+							echo "Inserting C4" 
+							gawk '$2>31949834 { print NR,$0 }' chr${CHR}_mod/mod.split${split_start}.chr-${CHR}.markers > chr${CHR}_mod/tmp_num.txt
+							let NR=`gawk 'NR==1 { print $1 }' chr${CHR}_mod/tmp_num.txt` 
+							line=`cat chr${CHR}_mod/tmpC4.split.${split_start}.markers`
+							ex -sc "${NR}i|${line}" -cx chr${CHR}_mod/mod.split${split_start}.chr-${CHR}.markers
+							join -1 2 -2 2 -o 1.2 1.3 <(sort -k2 chr${CHR}_mod/tmp_num.txt) <(sort -k2 chr${CHR}_mod/trimmed.updated.ref.chr${CHR}.split.${split_start}_mod.bgl) > chr${CHR}_mod/tmp_joined.txt
+							sort -k2 chr${CHR}_mod/tmp_joined.txt > chr${CHR}_mod/tmp_joined_ordered.txt
+							SNP=`gawk 'NR==1 { print $1 }' chr${CHR}_mod/tmp_joined_ordered.txt`
+							let NR=`gawk -v snp=${SNP} '$2==snp { print NR }' chr${CHR}_mod/trimmed.updated.ref.chr${CHR}.split.${split_start}_mod.bgl`
+							line=`cat chr${CHR}_mod/tmpC4.split.${split_start}.bgl`
+							ex -sc "${NR}i|${line}" -cx chr${CHR}_mod/trimmed.updated.ref.chr${CHR}.split.${split_start}_mod.bgl
+						fi
+                        
+			#Impute
+			java -Xmx1000m -jar -Djava.io.tmpdir=chr${CHR}_mod \
+                        ${b} \
+                        unphased=chr${CHR}_mod/split${split_start}.chr-${CHR}_mod.bgl \
+                        phased=chr${CHR}_mod/trimmed.updated.ref.chr${CHR}.split.${split_start}_mod.bgl \
+                        markers=chr${CHR}_mod/mod.split${split_start}.chr-${CHR}.markers  \
+                        missing=0 out=chr${CHR}_mod/imputed/bgl.chr${CHR}.split${split_start}
                     fi
             let split_start=${split_start}+1
             done
     let CHR=${CHR}+1
     done
- 
-fi
+fi 
