@@ -1,5 +1,5 @@
 p=#plink dir
-b=#beagle 3.3.2 dir
+b=#beagle dir
 
 # set variables 
 mode=$1
@@ -20,7 +20,7 @@ if [ "$data" == "" ]; then
 fi
  
 if [ "$data_dir" == "" ]; then
-     data_dir=#input data dir
+     data_dir=#target data
 fi
  
 if [ "$out_dir" == "" ]; then
@@ -62,7 +62,8 @@ echo "1=$1 2=$2 3=$3 4=$4 5=$5 6=$6 7=$7 8=$8"
 # Split by chromosome 
 # ---------------------------------------------------------------------------------------
  
-if [ "$mode" == "split.chr" ]; then 
+if [ "$mode" == "split.chr" ]; then
+mkdir split_by_chr 
 ./split_bed_into_chromosomes.pl ${data_dir}/${data} split_by_chr/${data}.chr
 fi 
  
@@ -174,7 +175,7 @@ if [ "$mode" == "gen.split.ref" ]; then
 		#create reference panel with no header
  	   	echo "$(tail -n +2 ref_panel_phased_header.bgl)" > ref_panel_phased.bgl
 		
-	#Extract snps belonging to each chunk, list ids and row number in .snps file; list all 4 fields in .markers file
+		#Extract snps belonging to each chunk, list ids and row number in .snps file; list all 4 fields in .markers file
         # extract reference SNPs based on chr pos
         # hap file: marker pos a1 a2
         gawk -v start=$start -v end=$end '$2>=start && $2<=end { print $1,NR }' markers_file.markers > chr${chr}/ref.chr${chr}.split.${set}.snps
@@ -212,7 +213,7 @@ if [ "$mode" == "step.impute" ]; then
 			
 			#Make directory
 			mkdir chr${CHR}_mod
-			mkdir chr${CHR}/imputed			
+			mkdir imputed			
 			while [ $split_start -le $split_end ]; do
                     if [ -e "chr${CHR}/split${split_start}.chr-${CHR}.dat" ]; then
                         echo "CHR ${CHR} SPLIT ${split_start}: ${check_file}"
@@ -256,14 +257,25 @@ if [ "$mode" == "step.impute" ]; then
 							line=`cat chr${CHR}_mod/tmpC4.split.${split_start}.bgl`
 							ex -sc "${NR}i|${line}" -cx chr${CHR}_mod/trimmed.updated.ref.chr${CHR}.split.${split_start}_mod.bgl
 						fi
+							#bsub -R "rusage[mem=6000]" -o ${out_dir}/chr${CHR}/begl.out -e ${out_dir}/chr${CHR}/begl.err \
                         
-			#Impute
-			java -Xmx1000m -jar -Djava.io.tmpdir=chr${CHR}_mod \
+						#move files
+						mv chr${CHR}_mod/split${split_start}.chr-${CHR}_mod.bgl imputed/split${split_start}.chr-${CHR}_mod.bgl
+						mv chr${CHR}_mod/trimmed.updated.ref.chr${CHR}.split.${split_start}_mod.bgl imputed/trimmed.updated.ref.chr${CHR}.split.${split_start}_mod.bgl
+						
+						#Either use combined markers file (markers from both target data and reference panel)
+						#mv chr${CHR}_mod/mod.split${split_start}.chr-${CHR}.markers imputed/mod.split${split_start}.chr-${CHR}.markers
+						
+						#or use only markers file corresponding to reference panel
+						mv chr${CHR}/ref.chr${CHR}.split.${split_start}.begl.markers imputed/ref.chr${CHR}.split.${split_start}.begl.markers
+						
+						#Impute
+						java -Xmx1000m -jar -Djava.io.tmpdir=imputed \
                         ${b} \
-                        unphased=chr${CHR}_mod/split${split_start}.chr-${CHR}_mod.bgl \
-                        phased=chr${CHR}_mod/trimmed.updated.ref.chr${CHR}.split.${split_start}_mod.bgl \
-                        markers=chr${CHR}_mod/mod.split${split_start}.chr-${CHR}.markers  \
-                        missing=0 out=chr${CHR}_mod/imputed/bgl.chr${CHR}.split${split_start}
+                        unphased=imputed/split${split_start}.chr-${CHR}_mod.bgl \
+                        phased=imputed/trimmed.updated.ref.chr${CHR}.split.${split_start}_mod.bgl \
+                        markers=imputed/ref.chr${CHR}.split.${split_start}.begl.markers  \
+                        missing=0 out=imputed/bgl.chr${CHR}.split${split_start}
                     fi
             let split_start=${split_start}+1
             done
