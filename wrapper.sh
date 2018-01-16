@@ -1,7 +1,6 @@
 #set working directory
-cd ~/anush/beagle_dir
 
-for data in camh cidar-va gap imh2 mcic mgh-phrs-landr-nefs pages-con1 tcd-nuig1 umcu1 umcu3 catie cogs-uk imh1 imh3 mfs pages pages-con2 tcd-nuig2 umcu2
+for data in #data dirs
 do
 	#remove pre-existing output file
 	if [ -e "onekgimputation.out" ]; then
